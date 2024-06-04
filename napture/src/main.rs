@@ -37,6 +37,7 @@ macro_rules! lualog {
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
+use std::ptr::null;
 use std::rc::Rc;
 
 glib::wrapper! {
@@ -51,6 +52,8 @@ static LOGO_PNG: &[u8] = include_bytes!("../file.png");
 use b9::css;
 use b9::css::Styleable;
 use glib::Object;
+use gtk::ffi::gtk_file_dialog_open_finish;
+use gtk::gio::Cancellable;
 use gtk::SignalListItemFactory;
 use historymod::History;
 use historymod::HistoryObject;
@@ -89,26 +92,7 @@ fn main() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
 
     app.connect_startup(|_| {
-        let mut content = r"
-        tab-label {
-            margin-bottom: 2px;
-        }
-        tab {
-            background-color: #424242;
-            border-radius: 12px;
-            padding: 10px;
-        }
-        search {
-            background-color: #424242;
-            border-radius: 12px;
-            padding: 5px;
-            color: white;
-        }
-        search image {
-            margin-right: 5px;
-        }
-        "
-        .to_string();
+        let mut content = fs::read_to_string("/home/jonar/programming/webx/webx/napture/style.css").expect("Expected a file."); 
 
         if !gtk::Settings::for_display(&Display::default().unwrap())
             .is_gtk_application_prefer_dark_theme()
@@ -258,10 +242,15 @@ fn build_ui(app: &adw::Application, args: Rc<RefCell<Vec<String>>>, config: Rc<R
     let rc_search = Rc::new(RefCell::new(search.clone()));
 
     let app_ = Rc::new(RefCell::new(app.clone()));
-
+    
     let event_controller = gtk::EventControllerKey::new();
     let history_ = Rc::clone(&history);
-
+    
+    let rc_scroll_refresh = rc_scroll.clone();
+    let rc_css_provider_refresh = rc_css_provider.clone();
+    let rc_tab_refresh = rc_tab.clone();
+    let rc_search_refresh = rc_search.clone();
+    let history = history.clone();
     event_controller.connect_key_pressed(move |_, key, _a, b| {
         let app_clone = Rc::clone(&app_);
         let history_clone = Rc::clone(&history_);
@@ -281,7 +270,20 @@ fn build_ui(app: &adw::Application, args: Rc<RefCell<Vec<String>>>, config: Rc<R
         if b == (gdk::ModifierType::SHIFT_MASK | gdk::ModifierType::CONTROL_MASK)
             && key == gdk::Key::H
         {
-            display_history_page(&app_clone, history_clone);
+            display_history_page(&app_clone, history_clone.clone());
+        }
+
+        if key == gdk::Key::F5
+        {
+            history_clone
+                .borrow_mut()
+                .add_to_history(rc_search_refresh.borrow().text().to_string(), get_time(), true);
+            handle_search_update(
+                rc_scroll_refresh.clone(),
+                rc_css_provider_refresh.clone(),
+                rc_tab_refresh.clone(),
+                rc_search_refresh.clone(),
+            );
         }
 
         glib::Propagation::Proceed
@@ -539,6 +541,7 @@ fn make_tab(
 fn make_refresh_button() -> gtk::Button {
     let button = gtk::Button::from_icon_name("view-refresh");
     button.add_css_class("refresh-button");
+    button.set_has_frame(true);
 
     button
 }
@@ -546,6 +549,7 @@ fn make_refresh_button() -> gtk::Button {
 fn make_home_button() -> gtk::Button {
     let button = gtk::Button::from_icon_name("go-home");
     button.add_css_class("home-button");
+    button.set_has_frame(true);
 
     button
 }
@@ -553,6 +557,7 @@ fn make_home_button() -> gtk::Button {
 fn make_go_back_button() -> gtk::Button {
     let button = gtk::Button::from_icon_name("go-previous");
     button.add_css_class("go-back-button");
+    button.set_has_frame(true);
 
     //if history.is_empty or already at the beginning of the history, disable the
     let history = Rc::new(RefCell::new(History::new()));
@@ -566,6 +571,7 @@ fn make_go_back_button() -> gtk::Button {
 fn make_go_forward_button() -> gtk::Button {
     let button = gtk::Button::from_icon_name("go-next");
     button.add_css_class("go-forward-button");
+    button.set_has_frame(true);
 
     //if history.is_empty or already at the beginning of the history, disable the
     let history = Rc::new(RefCell::new(History::new()));
@@ -722,6 +728,7 @@ fn display_settings_page(app: &Rc<RefCell<adw::Application>>) {
 
     dns_label.set_use_markup(true);
     dns_label.set_markup("DNS Server:");
+    dns_label.add_css_class("settings-label");
 
     gtkbox.append(&dns_label);
 
@@ -731,6 +738,7 @@ fn display_settings_page(app: &Rc<RefCell<adw::Application>>) {
         .build();
 
     dns_entry.set_text(DNS_SERVER.lock().unwrap().as_str());
+    dns_entry.add_css_class("settings-entry");
 
     gtkbox.append(&dns_entry);
 
@@ -741,6 +749,63 @@ fn display_settings_page(app: &Rc<RefCell<adw::Application>>) {
         DNS_SERVER.lock().unwrap().clear();
         DNS_SERVER.lock().unwrap().push_str(&dns);
         set_config(String::from("dns"), serde_json::Value::String(dns.to_string()), false)
+    });
+
+    let css_label = gtk::Label::builder()
+        .halign(gtk::Align::Start)
+        .valign(gtk::Align::Start)
+        .build();
+
+    css_label.set_use_markup(true);
+    css_label.set_markup("Custom CSS File:");
+    css_label.add_css_class("settings-label");
+
+    gtkbox.append(&css_label);
+
+    let cssbox = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .margin_top(12)
+        .margin_bottom(12)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+
+    let css_entry = gtk::Entry::builder()
+        .halign(gtk::Align::Start)
+        .valign(gtk::Align::Start)
+        .build();
+    css_entry.add_css_class("settings-entry");
+
+    cssbox.append(&css_entry);
+
+    let css_dialog_button = gtk::Button::from_icon_name("folder");
+    css_dialog_button.add_css_class("settings-button");
+
+    cssbox.append(&css_dialog_button);
+
+    let css_open_button = gtk::Button::from_icon_name("document-open");
+    css_open_button.add_css_class("settings-button");
+    
+    cssbox.append(&css_open_button);
+    
+    gtkbox.append(&cssbox);
+    let window_clone = window.clone();
+    css_dialog_button.connect_clicked(move |_| {
+        let filter = gtk::FileFilter::new();
+        // filter.add_mime_type("text/css");
+        filter.add_suffix("css");
+
+        let dialog = gtk::FileDialog::new();
+        dialog.set_title("Select custom CSS");
+        dialog.set_accept_label(Some("Select"));
+        dialog.set_default_filter(Some(&filter));
+        dialog.set_modal(false);
+
+        dialog.open(Some(&window_clone), Cancellable::current().as_ref(), |_| {
+            println!("chose file");
+
+        })
     });
 
     let scroll = gtk::ScrolledWindow::builder().build();
