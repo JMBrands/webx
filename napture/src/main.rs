@@ -497,7 +497,7 @@ fn make_tab(
         let dialog = gtk::AboutDialog::builder()
             .modal(true)
             .program_name("Bussin Napture")
-            .version("v1.2.2")
+            .version("v1.3.1")
             .website("https://github.com/face-hh/webx")
             .website_label("GitHub")
             .license_type(gtk::License::Apache20)
@@ -595,13 +595,14 @@ fn fetch_dns(url: String) -> String {
     let client: reqwest::blocking::ClientBuilder = reqwest::blocking::Client::builder();
 
     let clienturl = format!(
-        "https://{}/domain/{}/{}",
+        "{}/domain/{}/{}",
         DNS_SERVER.lock().unwrap().as_str(),
         url.split('.').next().unwrap_or(""),
         url.split('.').nth(1).unwrap_or("")
             .split('/').next().unwrap_or(""),
     );
 
+    
     let client = match client.build() {
         Ok(client) => client,
         Err(e) => {
